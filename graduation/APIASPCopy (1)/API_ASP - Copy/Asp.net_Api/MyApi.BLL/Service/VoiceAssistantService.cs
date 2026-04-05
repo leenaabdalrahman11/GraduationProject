@@ -1,7 +1,5 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using MyApi.DAL.DTO.Response;
 using MyApi.DAL.Models;
 using MyApi.DAL.Repository;
@@ -12,6 +10,9 @@ public class VoiceAssistantService : IVoiceAssistantService
 {
     private readonly IStoreRepository _storeRepository;
     private readonly IOpenAiService _openAiService;
+
+    private static string _lastAction = "";
+    private static string _lastQuery = "";
 
     public VoiceAssistantService(IStoreRepository storeRepository, IOpenAiService openAiService)
     {
@@ -27,7 +28,12 @@ public class VoiceAssistantService : IVoiceAssistantService
             {
                 Action = "None",
                 ReplyText = "I did not hear anything. Please try again.",
-                ScreenText = "No input received."
+                ScreenText = "No input received.",
+                RecognizedText = "",
+                CorrectedText = "",
+                NeedsConfirmation = false,
+                SuggestedAction = "",
+                SuggestedQuery = ""
             };
         }
 
@@ -36,13 +42,79 @@ public class VoiceAssistantService : IVoiceAssistantService
         if (interpretation is null)
             interpretation = RuleBasedFallback(text);
 
-        var action = interpretation.Action ?? "Unknown";
+        var action = interpretation.Action?.Trim() ?? "Unknown";
         var query = interpretation.Query?.Trim() ?? string.Empty;
+        var correctedText = interpretation.CorrectedText?.Trim();
+        var confidence = interpretation.Confidence;
+        var needsConfirmation = interpretation.NeedsConfirmation;
+        
+        if (needsConfirmation || confidence < 0.65 || action == "Unknown")
+{
+    return new VoiceResponseDto
+    {
+        Action = "Repeat",
+        ReplyText = "I did not understand what you said. Please repeat your request.",
+        ScreenText = "I did not understand. Please say it again.",
+        RecognizedText = text,
+        CorrectedText = correctedText ?? text,
+        NeedsConfirmation = true,
+        SuggestedAction = "",
+        SuggestedQuery = ""
+    };
+}
+
+        if (string.IsNullOrWhiteSpace(correctedText))
+            correctedText = text;
+
+        if (!string.IsNullOrWhiteSpace(action) && action != "Unknown")
+            _lastAction = action;
+
+        if (!string.IsNullOrWhiteSpace(query))
+            _lastQuery = query;
 
         var products = _storeRepository.GetProducts();
         var cartItems = _storeRepository.GetCartItems();
         var orders = _storeRepository.GetOrders();
 
+        if (needsConfirmation || confidence < 0.65)
+        {
+            return new VoiceResponseDto
+            {
+                Action = "Confirm",
+                ReplyText = $"Did you mean {correctedText}?",
+                ScreenText = $"Confirm request: {correctedText}",
+                RecognizedText = text,
+                CorrectedText = correctedText,
+                NeedsConfirmation = true,
+                SuggestedAction = action,
+                SuggestedQuery = query
+            };
+        }
+var allowedActions = new[]
+{
+    "SearchProduct",
+    "ViewCart",
+    "TrackLatestOrder",
+    "ViewOrders",
+    "Repeat",
+    "GoBack",
+    "Exit"
+};
+
+if (!allowedActions.Contains(action))
+{
+    return new VoiceResponseDto
+    {
+        Action = "Repeat",
+        ReplyText = "Your request is not one of the available options. Please repeat your request.",
+        ScreenText = "That option is not available. Please say it again.",
+        RecognizedText = text,
+        CorrectedText = correctedText ?? text,
+        NeedsConfirmation = true,
+        SuggestedAction = "",
+        SuggestedQuery = ""
+    };
+}
         switch (action)
         {
             case "SearchProduct":
@@ -53,17 +125,34 @@ public class VoiceAssistantService : IVoiceAssistantService
                     {
                         Action = "SearchProduct",
                         ReplyText = "You selected product search. Please say the product name.",
-                        ScreenText = "Search mode activated. Waiting for product name."
+                        ScreenText = "Search mode activated. Waiting for product name.",
+                        RecognizedText = text,
+                        CorrectedText = correctedText,
+                        NeedsConfirmation = false,
+                        SuggestedAction = "",
+                        SuggestedQuery = ""
                     };
                 }
+
+                var normalizedQuery = query.Trim().ToLower();
+                var queryWords = normalizedQuery
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Where(w => w.Length > 1)
+                    .ToList();
 
                 var matchedProducts = products
                     .Where(p => p.Translations != null &&
                                 p.Translations.Any(t =>
                                     (!string.IsNullOrWhiteSpace(t.Name) &&
-                                     t.Name.Contains(query, StringComparison.OrdinalIgnoreCase)) ||
+                                     (
+                                         t.Name.ToLower().Contains(normalizedQuery) ||
+                                         queryWords.Any(word => t.Name.ToLower().Contains(word))
+                                     )) ||
                                     (!string.IsNullOrWhiteSpace(t.Description) &&
-                                     t.Description.Contains(query, StringComparison.OrdinalIgnoreCase))))
+                                     (
+                                         t.Description.ToLower().Contains(normalizedQuery) ||
+                                         queryWords.Any(word => t.Description.ToLower().Contains(word))
+                                     ))))
                     .Take(3)
                     .ToList();
 
@@ -73,7 +162,12 @@ public class VoiceAssistantService : IVoiceAssistantService
                     {
                         Action = "SearchProduct",
                         ReplyText = $"I could not find any product matching {query}.",
-                        ScreenText = $"No products found for: {query}"
+                        ScreenText = $"No products found for: {query}",
+                        RecognizedText = text,
+                        CorrectedText = correctedText,
+                        NeedsConfirmation = false,
+                        SuggestedAction = "",
+                        SuggestedQuery = ""
                     };
                 }
 
@@ -102,6 +196,11 @@ public class VoiceAssistantService : IVoiceAssistantService
                     Action = "SearchProduct",
                     ReplyText = $"I found {matchedProducts.Count} product(s) for {query}. {spokenResults}.",
                     ScreenText = screenResults,
+                    RecognizedText = text,
+                    CorrectedText = correctedText,
+                    NeedsConfirmation = false,
+                    SuggestedAction = "",
+                    SuggestedQuery = "",
                     Data = matchedProducts
                 };
             }
@@ -131,7 +230,12 @@ public class VoiceAssistantService : IVoiceAssistantService
                     {
                         Action = "ViewCart",
                         ReplyText = "Your cart is empty.",
-                        ScreenText = "Cart is empty."
+                        ScreenText = "Cart is empty.",
+                        RecognizedText = text,
+                        CorrectedText = correctedText,
+                        NeedsConfirmation = false,
+                        SuggestedAction = "",
+                        SuggestedQuery = ""
                     };
                 }
 
@@ -148,6 +252,11 @@ public class VoiceAssistantService : IVoiceAssistantService
                     Action = "ViewCart",
                     ReplyText = $"Your cart contains {cartDetails.Count} item(s). {spokenCart}. Total amount is {totalAmount} shekels.",
                     ScreenText = $"{screenCart} | Total = {totalAmount} NIS",
+                    RecognizedText = text,
+                    CorrectedText = correctedText,
+                    NeedsConfirmation = false,
+                    SuggestedAction = "",
+                    SuggestedQuery = "",
                     Data = cartDetails
                 };
             }
@@ -164,7 +273,12 @@ public class VoiceAssistantService : IVoiceAssistantService
                     {
                         Action = "TrackLatestOrder",
                         ReplyText = "No orders were found.",
-                        ScreenText = "No latest order found."
+                        ScreenText = "No latest order found.",
+                        RecognizedText = text,
+                        CorrectedText = correctedText,
+                        NeedsConfirmation = false,
+                        SuggestedAction = "",
+                        SuggestedQuery = ""
                     };
                 }
 
@@ -173,6 +287,11 @@ public class VoiceAssistantService : IVoiceAssistantService
                     Action = "TrackLatestOrder",
                     ReplyText = $"Your latest order id is {latestOrder.Id}. Its status is {latestOrder.OrderStatus}.",
                     ScreenText = $"Latest order: {latestOrder.Id} - {latestOrder.OrderStatus}",
+                    RecognizedText = text,
+                    CorrectedText = correctedText,
+                    NeedsConfirmation = false,
+                    SuggestedAction = "",
+                    SuggestedQuery = "",
                     Data = latestOrder
                 };
             }
@@ -185,21 +304,31 @@ public class VoiceAssistantService : IVoiceAssistantService
                     {
                         Action = "ViewOrders",
                         ReplyText = "You do not have any orders.",
-                        ScreenText = "No orders found."
+                        ScreenText = "No orders found.",
+                        RecognizedText = text,
+                        CorrectedText = correctedText,
+                        NeedsConfirmation = false,
+                        SuggestedAction = "",
+                        SuggestedQuery = ""
                     };
                 }
 
                 var spokenOrders = string.Join(" . ", orders.Select(o =>
-                    $"Order {o.Id}, status {o.OrderStatus}, total shekels"));
+                    $"Order {o.Id}, status {o.OrderStatus}"));
 
                 var screenOrders = string.Join(" | ", orders.Select(o =>
-                    $"{o.Id} - {o.OrderStatus} -  NIS"));
+                    $"{o.Id} - {o.OrderStatus}"));
 
                 return new VoiceResponseDto
                 {
                     Action = "ViewOrders",
                     ReplyText = $"You have {orders.Count} order(s). {spokenOrders}.",
                     ScreenText = screenOrders,
+                    RecognizedText = text,
+                    CorrectedText = correctedText,
+                    NeedsConfirmation = false,
+                    SuggestedAction = "",
+                    SuggestedQuery = "",
                     Data = orders
                 };
             }
@@ -209,7 +338,12 @@ public class VoiceAssistantService : IVoiceAssistantService
                 {
                     Action = "Repeat",
                     ReplyText = "Repeating the available options. Search for a product, view cart items, track your latest order, or view my order.",
-                    ScreenText = "Options repeated."
+                    ScreenText = "Options repeated.",
+                    RecognizedText = text,
+                    CorrectedText = correctedText,
+                    NeedsConfirmation = false,
+                    SuggestedAction = "",
+                    SuggestedQuery = ""
                 };
 
             case "GoBack":
@@ -217,7 +351,12 @@ public class VoiceAssistantService : IVoiceAssistantService
                 {
                     Action = "GoBack",
                     ReplyText = "Going back to the main menu.",
-                    ScreenText = "Back to main menu."
+                    ScreenText = "Back to main menu.",
+                    RecognizedText = text,
+                    CorrectedText = correctedText,
+                    NeedsConfirmation = false,
+                    SuggestedAction = "",
+                    SuggestedQuery = ""
                 };
 
             case "Exit":
@@ -225,16 +364,26 @@ public class VoiceAssistantService : IVoiceAssistantService
                 {
                     Action = "Exit",
                     ReplyText = "Exiting the assistant. Goodbye.",
-                    ScreenText = "Session ended."
+                    ScreenText = "Session ended.",
+                    RecognizedText = text,
+                    CorrectedText = correctedText,
+                    NeedsConfirmation = false,
+                    SuggestedAction = "",
+                    SuggestedQuery = ""
                 };
 
-            default:
-                return new VoiceResponseDto
-                {
-                    Action = "Unknown",
-                    ReplyText = "Sorry, I did not understand. Please say search for a product, view cart items, track your latest order, or view my order.",
-                    ScreenText = $"Recognized text: {text}"
-                };
+default:
+    return new VoiceResponseDto
+    {
+        Action = "Repeat",
+        ReplyText = "I did not understand what you said. Please repeat your request.",
+        ScreenText = "I did not understand. Please say it again.",
+        RecognizedText = text,
+        CorrectedText = correctedText ?? text,
+        NeedsConfirmation = true,
+        SuggestedAction = "",
+        SuggestedQuery = ""
+    };
         }
     }
 
@@ -243,30 +392,100 @@ public class VoiceAssistantService : IVoiceAssistantService
         var lower = text.Trim().ToLowerInvariant();
 
         if (lower.Contains("cart"))
-            return new CommandInterpretation("ViewCart", "");
+        {
+            return new CommandInterpretation
+            {
+                Action = "ViewCart",
+                Query = "",
+                CorrectedText = text,
+                Confidence = 0.90,
+                NeedsConfirmation = false
+            };
+        }
+        
 
         if (lower.Contains("track") || lower.Contains("latest order"))
-            return new CommandInterpretation("TrackLatestOrder", "");
+        {
+            return new CommandInterpretation
+            {
+                Action = "TrackLatestOrder",
+                Query = "",
+                CorrectedText = text,
+                Confidence = 0.90,
+                NeedsConfirmation = false
+            };
+        }
 
         if (lower.Contains("my order") || lower.Contains("orders"))
-            return new CommandInterpretation("ViewOrders", "");
+        {
+            return new CommandInterpretation
+            {
+                Action = "ViewOrders",
+                Query = "",
+                CorrectedText = text,
+                Confidence = 0.90,
+                NeedsConfirmation = false
+            };
+        }
 
         if (lower.Contains("repeat") || lower.Contains("relisten"))
-            return new CommandInterpretation("Repeat", "");
+        {
+            return new CommandInterpretation
+            {
+                Action = "Repeat",
+                Query = "",
+                CorrectedText = text,
+                Confidence = 0.90,
+                NeedsConfirmation = false
+            };
+        }
 
         if (lower.Contains("back"))
-            return new CommandInterpretation("GoBack", "");
+        {
+            return new CommandInterpretation
+            {
+                Action = "GoBack",
+                Query = "",
+                CorrectedText = text,
+                Confidence = 0.90,
+                NeedsConfirmation = false
+            };
+        }
 
         if (lower.Contains("exit") || lower.Contains("quit") || lower.Contains("goodbye") || lower.Contains("close"))
-            return new CommandInterpretation("Exit", "");
+        {
+            return new CommandInterpretation
+            {
+                Action = "Exit",
+                Query = "",
+                CorrectedText = text,
+                Confidence = 0.90,
+                NeedsConfirmation = false
+            };
+        }
 
         if (lower.Contains("search") || lower.Contains("find") || lower.Contains("look for") || lower.Contains("product"))
         {
             var query = ExtractSearchTerm(lower);
-            return new CommandInterpretation("SearchProduct", query);
+
+            return new CommandInterpretation
+            {
+                Action = "SearchProduct",
+                Query = query,
+                CorrectedText = text,
+                Confidence = string.IsNullOrWhiteSpace(query) ? 0.60 : 0.85,
+                NeedsConfirmation = false
+            };
         }
 
-        return new CommandInterpretation("Unknown", "");
+        return new CommandInterpretation
+        {
+            Action = "Unknown",
+            Query = "",
+            CorrectedText = text,
+            Confidence = 0.30,
+            NeedsConfirmation = true
+        };
     }
 
     private static string ExtractSearchTerm(string text)

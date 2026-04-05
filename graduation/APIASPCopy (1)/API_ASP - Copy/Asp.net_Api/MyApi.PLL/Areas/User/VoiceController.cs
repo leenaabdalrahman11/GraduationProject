@@ -1,63 +1,60 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using MyApi.BLL.Service;
 using MyApi.DAL.Models;
 
-namespace MyApi.PLL.Controllers
+namespace MyApi.PLL.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class VoiceController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    public class VoiceController : ControllerBase
+    private readonly IVoiceAssistantService _voiceAssistantService;
+    private readonly IOpenAiService _openAiService;
+
+    public VoiceController(
+        IVoiceAssistantService voiceAssistantService,
+        IOpenAiService openAiService)
     {
-        [HttpGet("start")]
-        public IActionResult Start()
+        _voiceAssistantService = voiceAssistantService;
+        _openAiService = openAiService;
+    }
+
+    [HttpGet("start")]
+    public IActionResult Start()
+    {
+        return Ok(new
         {
-            return Ok(new
+            message = "Hi, how can I help you? You can say search for a product, view cart items, track your latest order, or view my order.",
+            options = new[]
             {
-                message = "Hi, how can I help you? You can say search for a product, view cart items, track your latest order, or view my order.",
-                options = new[]
-                {
                 "Search for a product",
                 "View cart items",
                 "Track your latest order",
                 "View my order"
             },
-                status = "ready"
-            });
-        }
+            status = "ready"
+        });
+    }
 
 [HttpPost("transcribe")]
-public async Task<IActionResult> Transcribe(
-    [FromServices] IOpenAiService openAiService)
+public async Task<IActionResult> Transcribe(IFormFile file, [FromForm] string? language)
 {
-    var form = await Request.ReadFormAsync();
-    var file = form.Files["file"];
+    if (file == null || file.Length == 0)
+        return BadRequest("No audio file uploaded.");
 
-    if (file is null || file.Length == 0)
-    {
-        return BadRequest(new { error = "No audio file uploaded." });
-    }
+    var text = await _openAiService.TranscribeAudioAsync(file, language);
 
-    var result = await openAiService.TranscribeAudioAsync(file);
-
-    if (string.IsNullOrWhiteSpace(result))
-    {
-        return Problem("Audio transcription failed.");
-    }
-
-    return Ok(new { text = result });
+    return Ok(new { text });
 }
-
-        [HttpPost("command")]
-        public async Task<IActionResult> Command(
-            [FromBody] VoiceCommandRequest request,
-            [FromServices] IVoiceAssistantService voiceAssistantService)
+    [HttpPost("command")]
+    public async Task<IActionResult> ExecuteCommand([FromBody] VoiceCommandRequest request)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.Text))
         {
-            var result = await voiceAssistantService.ExecuteCommandAsync(request.Text);
-            return Ok(result);
+            return BadRequest(new { error = "Text is required." });
         }
+
+        var result = await _voiceAssistantService.ExecuteCommandAsync(request.Text);
+        return Ok(result);
     }
 }

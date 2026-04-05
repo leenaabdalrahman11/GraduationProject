@@ -12,7 +12,6 @@ import Search from "../components/user/search/Search";
 import Register from "../pages/user/register/Register";
 import Login from "../pages/user/login/Login";
 import HomePageBlind from "../blind/pages/HomePageBlind.jsx";
-import VoiceCommandUI from "../blind/components/VoiceCommandUI";
 
 export const router = createBrowserRouter([
   {

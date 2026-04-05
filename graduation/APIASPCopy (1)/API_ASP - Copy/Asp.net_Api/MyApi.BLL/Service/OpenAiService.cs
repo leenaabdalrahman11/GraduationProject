@@ -2,7 +2,6 @@ using System;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using MyApi.DAL.Models;
@@ -19,8 +18,7 @@ public class OpenAiService : IOpenAiService
         _config = config;
         _httpClientFactory = httpClientFactory;
     }
-
-    public async Task<string?> TranscribeAudioAsync(IFormFile file)
+public async Task<string?> TranscribeAudioAsync(IFormFile file, string? language)
     {
         if (file == null || file.Length == 0)
             return null;
@@ -34,7 +32,7 @@ public class OpenAiService : IOpenAiService
             new AuthenticationHeaderValue("Bearer", apiKey);
 
         using var content = new MultipartFormDataContent();
-
+content.Add(new StringContent(string.IsNullOrWhiteSpace(language) ? "ar" : language), "language");
         await using var stream = file.OpenReadStream();
         using var fileContent = new StreamContent(stream);
 
@@ -42,11 +40,11 @@ public class OpenAiService : IOpenAiService
             new MediaTypeHeaderValue(string.IsNullOrWhiteSpace(file.ContentType)
                 ? "audio/webm"
                 : file.ContentType);
-
-        content.Add(fileContent, "file", file.FileName);
-        content.Add(new StringContent("gpt-4o-mini-transcribe"), "model");
-        content.Add(new StringContent("json"), "response_format");
-
+content.Add(fileContent, "file", file.FileName);
+content.Add(new StringContent("gpt-4o-transcribe"), "model");
+content.Add(new StringContent("json"), "response_format");
+content.Add(new StringContent("ar"), "language");
+content.Add(new StringContent("This audio is mostly Arabic, sometimes mixed with English product names. Keep product names and brand names as spoken."), "prompt");
         var response = await client.PostAsync(
             "https://api.openai.com/v1/audio/transcriptions",
             content);
@@ -79,25 +77,41 @@ public class OpenAiService : IOpenAiService
         }
     }
 
-    public async Task<CommandInterpretation?> InterpretCommandAsync(string text)
+public async Task<CommandInterpretation?> InterpretCommandAsync(string text)
+{
+    if (string.IsNullOrWhiteSpace(text))
+        return null;
+
+    var apiKey = GetApiKey();
+    if (string.IsNullOrWhiteSpace(apiKey))
+        return null;
+
+    using var client = _httpClientFactory.CreateClient();
+    client.DefaultRequestHeaders.Authorization =
+        new AuthenticationHeaderValue("Bearer", apiKey);
+
+    var payload = new
     {
-        if (string.IsNullOrWhiteSpace(text))
-            return null;
-
-        var apiKey = GetApiKey();
-        if (string.IsNullOrWhiteSpace(apiKey))
-            return null;
-
-        using var client = _httpClientFactory.CreateClient();
-        client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", apiKey);
-
-        var prompt = """
+        model = "gpt-5.4",
+        reasoning = new { effort = "minimal" },
+        input = new object[]
+        {
+            new
+            {
+                role = "developer",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = """
 You are a voice shopping assistant router.
 
-Read the user text and return JSON only.
-No markdown.
-No explanation.
+Your job:
+1. Correct obvious transcription mistakes without changing meaning.
+2. Detect the intended action.
+3. Extract the search term if present.
+4. Return structured JSON only.
 
 Allowed actions:
 - SearchProduct
@@ -110,65 +124,109 @@ Allowed actions:
 - Unknown
 
 Rules:
-- If the user asks to search/find/look for a product, set action = "SearchProduct".
-- Put the product/category term inside "query".
-- If the user only says "search for a product", query should be "".
-- If the user asks about cart, set action = "ViewCart".
-- If the user asks to track the latest order, set action = "TrackLatestOrder".
-- If the user asks to view orders or my order, set action = "ViewOrders".
-- If the user says repeat or relisten, set action = "Repeat".
-- If the user says back or go back, set action = "GoBack".
-- If the user says exit, quit, close, or goodbye, set action = "Exit".
-- Otherwise set action = "Unknown".
+- If user asks to search/find/look for a product => SearchProduct
+- If user asks about cart => ViewCart
+- If user asks to track latest order => TrackLatestOrder
+- If user asks to view orders => ViewOrders
+- If user says repeat/relisten => Repeat
+- If user says back/go back => GoBack
+- If user says exit/quit/close/goodbye => Exit
+- Otherwise => Unknown
 
-Return exactly:
-{"action":"...","query":"..."}
-
-User text:
-""" + text;
-
-        var payload = new
-        {
-            model = "gpt-5.4",
-            reasoning = new { effort = "minimal" },
-            input = prompt
-        };
-
-        var json = JsonSerializer.Serialize(payload);
-        using var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var response = await client.PostAsync("https://api.openai.com/v1/responses", httpContent);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"Interpretation error: {error}");
-            return null;
-        }
-
-        var body = await response.Content.ReadAsStringAsync();
-        var modelText = ExtractResponsesOutputText(body);
-
-        if (string.IsNullOrWhiteSpace(modelText))
-            return null;
-
-        try
-        {
-            return JsonSerializer.Deserialize<CommandInterpretation>(
-                modelText,
-                new JsonSerializerOptions
+Set confidence between 0 and 1.
+If no product term exists, query should be empty string.
+"""
+                    }
+                }
+            },
+            new
+            {
+                role = "user",
+                content = new object[]
                 {
-                    PropertyNameCaseInsensitive = true
-                });
-        }
-        catch (Exception ex)
+                    new
+                    {
+                        type = "text",
+                        text = $"User text: {text}"
+                    }
+                }
+            }
+        },
+        text = new
         {
-            Console.WriteLine($"JSON parse error: {ex.Message}");
-            Console.WriteLine($"Model returned: {modelText}");
-            return null;
+            format = new
+            {
+                type = "json_schema",
+                name = "voice_command_result",
+                schema = new
+                {
+                    type = "object",
+                    additionalProperties = false,
+                    properties = new
+                    {
+                        action = new
+                        {
+                            type = "string",
+                            @enum = new[]
+                            {
+                                "SearchProduct",
+                                "ViewCart",
+                                "TrackLatestOrder",
+                                "ViewOrders",
+                                "Repeat",
+                                "GoBack",
+                                "Exit",
+                                "Unknown"
+                            }
+                        },
+                        query = new { type = "string" },
+                        correctedText = new { type = "string" },
+                        confidence = new { type = "number" }
+                    },
+                    required = new[] { "action", "query", "correctedText", "confidence" }
+                }
+            }
         }
+    };
+
+    var json = JsonSerializer.Serialize(payload);
+    using var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
+
+    var response = await client.PostAsync("https://api.openai.com/v1/responses", httpContent);
+
+    if (!response.IsSuccessStatusCode)
+    {
+        var error = await response.Content.ReadAsStringAsync();
+        Console.WriteLine($"Interpretation error: {error}");
+        return null;
     }
 
+    var body = await response.Content.ReadAsStringAsync();
+    var modelText = ExtractResponsesOutputText(body);
+
+    if (string.IsNullOrWhiteSpace(modelText))
+        return null;
+
+    try
+    {
+        using var doc = JsonDocument.Parse(modelText);
+        var root = doc.RootElement;
+
+        return new CommandInterpretation
+        {
+            Action = root.GetProperty("action").GetString(),
+            Query = root.GetProperty("query").GetString(),
+            CorrectedText = root.GetProperty("correctedText").GetString(),
+            Confidence = root.GetProperty("confidence").GetDouble()
+        };
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"JSON parse error: {ex.Message}");
+        Console.WriteLine($"Model returned: {modelText}");
+        return null;
+    }
+}
     private string? GetApiKey()
     {
         return _config["OpenAI:ApiKey"]

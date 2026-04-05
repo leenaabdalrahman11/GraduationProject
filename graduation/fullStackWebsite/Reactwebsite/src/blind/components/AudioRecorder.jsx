@@ -11,59 +11,59 @@ const AudioRecorder = ({
   isMuted
 }) => {
   return (
-    <div className="flex gap-4 flex-wrap">
+    <div className="flex flex-wrap justify-center gap-4">
       <button
-  onClick={startRecording}
-  disabled={isMuted}
-  className={`rounded-[28px] border-[3px] px-4 py-4 text-xl font-bold text-[#0d4f91] ${
-    isMuted
-      ? 'cursor-not-allowed border-gray-400 bg-gray-300'
-      : 'border-[#2d71b8] bg-[#7fb3e6]'
-  }`}
->
-  speak
-</button>
+        onClick={handleSkip}
+        className="min-w-[140px] rounded-[26px] border-[3px] border-[#8b5e3c] bg-[#d8c2ad] px-6 py-4 text-2xl font-bold text-[#6b4226] shadow-sm transition hover:bg-[#c9ae95]"
+      >
+        Skip
+      </button>
 
       <button
-        onClick={stopRecording}
-        className="rounded-[28px] border-[3px] border-[#2d71b8] bg-[#bfc3c8] px-4 py-4 text-xl font-bold text-[#0d4f91]"
+        onClick={startRecording}
+        disabled={isMuted}
+        className={`min-w-[140px] rounded-[26px] border-[3px] px-6 py-4 text-2xl font-bold shadow-sm transition ${
+          isMuted
+            ? 'cursor-not-allowed border-[#b7a79a] bg-[#ddd4cc] text-[#8c7b6d]'
+            : 'border-[#8b5e3c] bg-[#c9976b] text-[#fffaf5] hover:bg-[#b98558]'
+        }`}
       >
-        Stop
+        Speak
       </button>
 
       <button
         onClick={handleMute}
-        className="rounded-[28px] border-[3px] border-[#2d71b8] bg-[#bfc3c8] px-4 py-4 text-xl font-bold text-[#0d4f91]"
+        className="min-w-[140px] rounded-[26px] border-[3px] border-[#8b5e3c] bg-[#d8c2ad] px-6 py-4 text-2xl font-bold text-[#6b4226] shadow-sm transition hover:bg-[#c9ae95]"
       >
         {isMuted ? "Unmute" : "Mute"}
       </button>
 
       <button
         onClick={handleReListen}
-        className="rounded-[28px] border-[3px] border-[#2d71b8] bg-[#7fb3e6] px-4 py-4 text-xl font-bold text-[#0d4f91]"
+        className="min-w-[140px] rounded-[26px] border-[3px] border-[#8b5e3c] bg-[#d8c2ad] px-6 py-4 text-2xl font-bold text-[#6b4226] shadow-sm transition hover:bg-[#c9ae95]"
       >
         Re listen
       </button>
 
       <button
-        onClick={handleSkip}
-        className="rounded-[28px] border-[3px] border-[#2d71b8] bg-[#bfc3c8] px-4 py-4 text-xl font-bold text-[#0d4f91]"
-      >
-        Skip
-      </button>
-
-      <button
         onClick={handleExit}
-        className="rounded-[28px] border-[3px] border-[#2d71b8] bg-[#7fb3e6] px-4 py-4 text-xl font-bold text-[#0d4f91]"
+        className="min-w-[140px] rounded-[26px] border-[3px] border-[#8b5e3c] bg-[#d8c2ad] px-6 py-4 text-2xl font-bold text-[#6b4226] shadow-sm transition hover:bg-[#c9ae95]"
       >
         Exit
       </button>
 
       <button
         onClick={handleGoBack}
-        className="rounded-[28px] border-[3px] border-[#2d71b8] bg-[#bfc3c8] px-4 py-4 text-xl font-bold text-[#0d4f91]"
+        className="min-w-[140px] rounded-[26px] border-[3px] border-[#8b5e3c] bg-[#d8c2ad] px-6 py-4 text-2xl font-bold text-[#6b4226] shadow-sm transition hover:bg-[#c9ae95]"
       >
         Go Back
+      </button>
+
+      <button
+        onClick={stopRecording}
+        className="min-w-[140px] rounded-[26px] border-[3px] border-[#8b5e3c] bg-[#d8c2ad] px-6 py-4 text-2xl font-bold text-[#6b4226] shadow-sm transition hover:bg-[#c9ae95]"
+      >
+        Stop
       </button>
     </div>
   );
