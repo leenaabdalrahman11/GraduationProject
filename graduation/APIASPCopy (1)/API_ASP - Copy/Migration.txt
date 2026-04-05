@@ -1,0 +1,8 @@
+dotnet ef migrations add FixModelChanges --project ..\MyApi.DAL\MyApi.DAL.csproj --startup-project .\MyApi.PLL.csproj
+
+dotnet ef database update --project ..\MyApi.DAL\MyApi.DAL.csproj --startup-project .\MyApi.PLL.csproj
+
+
+
+dotnet ef migrations add RefreshToken --project ..\MyApi.DAL\MyApi.DAL.csproj --startup-project .\MyApi.PLL.csproj
+dotnet ef database update --project ..\MyApi.DAL\MyApi.DAL.csproj --startup-project .\MyApi.PLL.csproj
