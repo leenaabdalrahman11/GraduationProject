@@ -20,7 +20,7 @@ public class VoiceAssistantService : IVoiceAssistantService
         _openAiService = openAiService;
     }
 
-    public async Task<VoiceResponseDto> ExecuteCommandAsync(string text)
+    public async Task<VoiceResponseDto> ExecuteCommandAsync(string text, string? language)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -37,31 +37,31 @@ public class VoiceAssistantService : IVoiceAssistantService
             };
         }
 
-        var interpretation = await _openAiService.InterpretCommandAsync(text);
+        var interpretation = await _openAiService.InterpretCommandAsync(text, language);
 
         if (interpretation is null)
-            interpretation = RuleBasedFallback(text);
+            interpretation = RuleBasedFallback(text, language);
 
         var action = interpretation.Action?.Trim() ?? "Unknown";
-        var query = interpretation.Query?.Trim() ?? string.Empty;
+        var queryText = interpretation.Query?.Trim() ?? string.Empty;
         var correctedText = interpretation.CorrectedText?.Trim();
         var confidence = interpretation.Confidence;
         var needsConfirmation = interpretation.NeedsConfirmation;
-        
-        if (needsConfirmation || confidence < 0.65 || action == "Unknown")
-{
-    return new VoiceResponseDto
-    {
-        Action = "Repeat",
-        ReplyText = "I did not understand what you said. Please repeat your request.",
-        ScreenText = "I did not understand. Please say it again.",
-        RecognizedText = text,
-        CorrectedText = correctedText ?? text,
-        NeedsConfirmation = true,
-        SuggestedAction = "",
-        SuggestedQuery = ""
-    };
-}
+
+        if (needsConfirmation || confidence < 0.65)
+        {
+            return new VoiceResponseDto
+            {
+                Action = "Repeat",
+                ReplyText = "I did not understand what you said. Please repeat your request.",
+                ScreenText = "I did not understand. Please say it again.",
+                RecognizedText = text,
+                CorrectedText = correctedText ?? text,
+                NeedsConfirmation = true,
+                SuggestedAction = "",
+                SuggestedQuery = ""
+            };
+        }
 
         if (string.IsNullOrWhiteSpace(correctedText))
             correctedText = text;
@@ -69,57 +69,45 @@ public class VoiceAssistantService : IVoiceAssistantService
         if (!string.IsNullOrWhiteSpace(action) && action != "Unknown")
             _lastAction = action;
 
-        if (!string.IsNullOrWhiteSpace(query))
-            _lastQuery = query;
+        if (!string.IsNullOrWhiteSpace(queryText))
+            _lastQuery = queryText;
 
         var products = _storeRepository.GetProducts();
         var cartItems = _storeRepository.GetCartItems();
         var orders = _storeRepository.GetOrders();
 
-        if (needsConfirmation || confidence < 0.65)
+        var allowedActions = new[]
+        {
+            "SearchProduct",
+            "ViewCart",
+            "TrackLatestOrder",
+            "ViewOrders",
+            "Repeat",
+            "GoBack",
+            "Exit",
+            "GeneralConversation"
+        };
+
+        if (!allowedActions.Contains(action))
         {
             return new VoiceResponseDto
             {
-                Action = "Confirm",
-                ReplyText = $"Did you mean {correctedText}?",
-                ScreenText = $"Confirm request: {correctedText}",
+                Action = "Repeat",
+                ReplyText = "Your request is not one of the available options. Please repeat your request.",
+                ScreenText = "That option is not available. Please say it again.",
                 RecognizedText = text,
-                CorrectedText = correctedText,
+                CorrectedText = correctedText ?? text,
                 NeedsConfirmation = true,
-                SuggestedAction = action,
-                SuggestedQuery = query
+                SuggestedAction = "",
+                SuggestedQuery = ""
             };
         }
-var allowedActions = new[]
-{
-    "SearchProduct",
-    "ViewCart",
-    "TrackLatestOrder",
-    "ViewOrders",
-    "Repeat",
-    "GoBack",
-    "Exit"
-};
 
-if (!allowedActions.Contains(action))
-{
-    return new VoiceResponseDto
-    {
-        Action = "Repeat",
-        ReplyText = "Your request is not one of the available options. Please repeat your request.",
-        ScreenText = "That option is not available. Please say it again.",
-        RecognizedText = text,
-        CorrectedText = correctedText ?? text,
-        NeedsConfirmation = true,
-        SuggestedAction = "",
-        SuggestedQuery = ""
-    };
-}
         switch (action)
         {
             case "SearchProduct":
             {
-                if (string.IsNullOrWhiteSpace(query))
+                if (string.IsNullOrWhiteSpace(queryText))
                 {
                     return new VoiceResponseDto
                     {
@@ -134,7 +122,8 @@ if (!allowedActions.Contains(action))
                     };
                 }
 
-                var normalizedQuery = query.Trim().ToLower();
+                var normalizedQuery = queryText.Trim().ToLowerInvariant();
+
                 var queryWords = normalizedQuery
                     .Split(' ', StringSplitOptions.RemoveEmptyEntries)
                     .Where(w => w.Length > 1)
@@ -161,8 +150,8 @@ if (!allowedActions.Contains(action))
                     return new VoiceResponseDto
                     {
                         Action = "SearchProduct",
-                        ReplyText = $"I could not find any product matching {query}.",
-                        ScreenText = $"No products found for: {query}",
+                        ReplyText = $"I could not find any product matching {queryText}.",
+                        ScreenText = $"No products found for: {queryText}",
                         RecognizedText = text,
                         CorrectedText = correctedText,
                         NeedsConfirmation = false,
@@ -194,7 +183,7 @@ if (!allowedActions.Contains(action))
                 return new VoiceResponseDto
                 {
                     Action = "SearchProduct",
-                    ReplyText = $"I found {matchedProducts.Count} product(s) for {query}. {spokenResults}.",
+                    ReplyText = $"I found {matchedProducts.Count} product(s) for {queryText}. {spokenResults}.",
                     ScreenText = screenResults,
                     RecognizedText = text,
                     CorrectedText = correctedText,
@@ -204,6 +193,19 @@ if (!allowedActions.Contains(action))
                     Data = matchedProducts
                 };
             }
+
+            case "GeneralConversation":
+                return new VoiceResponseDto
+                {
+                    Action = "GeneralConversation",
+                    ReplyText = GetNaturalReply(correctedText ?? text, language),
+                    ScreenText = GetNaturalReply(correctedText ?? text, language),
+                    RecognizedText = text,
+                    CorrectedText = correctedText ?? text,
+                    NeedsConfirmation = false,
+                    SuggestedAction = "",
+                    SuggestedQuery = ""
+                };
 
             case "ViewCart":
             {
@@ -372,24 +374,57 @@ if (!allowedActions.Contains(action))
                     SuggestedQuery = ""
                 };
 
-default:
-    return new VoiceResponseDto
-    {
-        Action = "Repeat",
-        ReplyText = "I did not understand what you said. Please repeat your request.",
-        ScreenText = "I did not understand. Please say it again.",
-        RecognizedText = text,
-        CorrectedText = correctedText ?? text,
-        NeedsConfirmation = true,
-        SuggestedAction = "",
-        SuggestedQuery = ""
-    };
+            default:
+                return new VoiceResponseDto
+                {
+                    Action = "Repeat",
+                    ReplyText = "I did not understand what you said. Please repeat your request.",
+                    ScreenText = "I did not understand. Please say it again.",
+                    RecognizedText = text,
+                    CorrectedText = correctedText ?? text,
+                    NeedsConfirmation = true,
+                    SuggestedAction = "",
+                    SuggestedQuery = ""
+                };
         }
     }
 
-    private static CommandInterpretation RuleBasedFallback(string text)
+    private static CommandInterpretation RuleBasedFallback(string text, string? language)
     {
         var lower = text.Trim().ToLowerInvariant();
+        var selectedLanguage = string.IsNullOrWhiteSpace(language) ? "ar" : language.ToLowerInvariant();
+
+        if (selectedLanguage == "ar")
+        {
+            if (lower.Contains("مرحبا") || lower.Contains("هلو") || lower.Contains("اهلا") ||
+                lower.Contains("كيفك") || lower.Contains("شلونك") || lower.Contains("شكرا"))
+            {
+                return new CommandInterpretation
+                {
+                    Action = "GeneralConversation",
+                    Query = "",
+                    CorrectedText = text,
+                    Confidence = 0.95,
+                    NeedsConfirmation = false
+                };
+            }
+        }
+
+        if (selectedLanguage == "en")
+        {
+            if (lower.Contains("hello") || lower.Contains("hi") || lower.Contains("hey") ||
+                lower.Contains("how are you") || lower.Contains("thanks") || lower.Contains("thank you"))
+            {
+                return new CommandInterpretation
+                {
+                    Action = "GeneralConversation",
+                    Query = "",
+                    CorrectedText = text,
+                    Confidence = 0.95,
+                    NeedsConfirmation = false
+                };
+            }
+        }
 
         if (lower.Contains("cart"))
         {
@@ -402,7 +437,6 @@ default:
                 NeedsConfirmation = false
             };
         }
-        
 
         if (lower.Contains("track") || lower.Contains("latest order"))
         {
@@ -466,14 +500,14 @@ default:
 
         if (lower.Contains("search") || lower.Contains("find") || lower.Contains("look for") || lower.Contains("product"))
         {
-            var query = ExtractSearchTerm(lower);
+            var extractedQuery = ExtractSearchTerm(lower);
 
             return new CommandInterpretation
             {
                 Action = "SearchProduct",
-                Query = query,
+                Query = extractedQuery,
                 CorrectedText = text,
-                Confidence = string.IsNullOrWhiteSpace(query) ? 0.60 : 0.85,
+                Confidence = string.IsNullOrWhiteSpace(extractedQuery) ? 0.60 : 0.85,
                 NeedsConfirmation = false
             };
         }
@@ -510,5 +544,41 @@ default:
         }
 
         return cleaned.Trim();
+    }
+
+    private static string GetNaturalReply(string text, string? language)
+    {
+        var lower = text.Trim().ToLowerInvariant();
+        var selectedLanguage = string.IsNullOrWhiteSpace(language) ? "ar" : language.ToLowerInvariant();
+
+        if (selectedLanguage == "ar")
+        {
+            if (lower.Contains("مرحبا") || lower.Contains("هلو") || lower.Contains("اهلا"))
+                return "أهلا، كيف بقدر أساعدك؟";
+
+            if (lower.Contains("كيفك") || lower.Contains("شلونك"))
+                return "أنا بخير، كيف بقدر أساعدك اليوم؟";
+
+            if (lower.Contains("شكرا"))
+                return "على الرحب والسعة، كيف بقدر أساعدك كمان؟";
+
+            return "أكيد، كيف بقدر أساعدك؟";
+        }
+
+        if (selectedLanguage == "en")
+        {
+            if (lower.Contains("hello") || lower.Contains("hi") || lower.Contains("hey"))
+                return "Hello, how can I help you?";
+
+            if (lower.Contains("how are you"))
+                return "I am fine. How can I help you today?";
+
+            if (lower.Contains("thanks") || lower.Contains("thank you"))
+                return "You're welcome. How else can I help you?";
+
+            return "Sure, how can I help you?";
+        }
+
+        return "How can I help you?";
     }
 }

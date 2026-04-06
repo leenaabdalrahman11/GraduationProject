@@ -15,6 +15,7 @@ export default function HomePageBlind() {
   const [voiceStartStatus, setVoiceStartStatus] = useState('Loading...');
   const [selectedLanguage, setSelectedLanguage] = useState("");
   const [languageStep, setLanguageStep] = useState(true);
+  const [lastSpokenText, setLastSpokenText] = useState("");
 
   const isMutedRef = useRef(false);
   const recorderRef = useRef(null);
@@ -28,7 +29,21 @@ export default function HomePageBlind() {
       window.speechSynthesis.speak(utterance);
     }
   }, [languageStep]);
+useEffect(() => {
+  const loadVoices = () => {
+    window.speechSynthesis.getVoices();
+  };
 
+  loadVoices();
+
+  if (window.speechSynthesis.onvoiceschanged !== undefined) {
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }
+
+  return () => {
+    window.speechSynthesis.onvoiceschanged = null;
+  };
+}, []);
   useEffect(() => {
     const fetchVoiceStartData = async () => {
       try {
@@ -47,12 +62,56 @@ export default function HomePageBlind() {
     fetchVoiceStartData();
   }, []);
 
-  const speakText = (text) => {
-    if (!text || isMutedRef.current) return;
-    window.speechSynthesis.cancel();
+const speakText = (text) => {
+  if (!text || isMutedRef.current) return;
+  if (!("speechSynthesis" in window)) return;
+
+  const synth = window.speechSynthesis;
+  synth.cancel();
+  synth.resume();
+
+  const speakNow = () => {
     const utterance = new SpeechSynthesisUtterance(text);
-    window.speechSynthesis.speak(utterance);
+    const hasArabic = /[\u0600-\u06FF]/.test(text);
+    const voices = synth.getVoices();
+
+    console.log("Available voices:", voices.map(v => `${v.name} - ${v.lang}`));
+    console.log("Text to speak:", text);
+
+    let selectedVoice = null;
+
+    if (hasArabic || selectedLanguage === "ar") {
+      utterance.lang = "ar";
+      selectedVoice =
+        voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("ar")) ||
+        voices[0] ||
+        null;
+    } else {
+      utterance.lang = "en-US";
+      selectedVoice =
+        voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("en")) ||
+        voices[0] ||
+        null;
+    }
+
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+      console.log("Selected voice:", selectedVoice.name, selectedVoice.lang);
+    }
+
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+
+    utterance.onstart = () => console.log("Speech started");
+    utterance.onend = () => console.log("Speech ended");
+    utterance.onerror = (e) => console.error("Speech error:", e);
+
+    synth.speak(utterance);
   };
+console.log(window.speechSynthesis.getVoices());
+  setTimeout(speakNow, 300);
+};
 
   const handleLanguageSelect = (lang) => {
     const isArabic = lang === "ar";
@@ -143,71 +202,75 @@ export default function HomePageBlind() {
     }
   };
 
-  const sendCommandText = async (text) => {
-    try {
-      if (languageStep) {
-        const lowerText = text.toLowerCase().trim();
+const sendCommandText = async (text) => {
+  try {
+    if (languageStep) {
+      const lowerText = text.toLowerCase().trim();
 
-        if (
-          lowerText.includes("arabic") ||
-          lowerText.includes("عربي") ||
-          lowerText.includes("العربية")
-        ) {
-          handleLanguageSelect("ar");
-          return;
-        }
-
-        if (
-          lowerText.includes("english") ||
-          lowerText.includes("انجليزي") ||
-          lowerText.includes("english language")
-        ) {
-          handleLanguageSelect("en");
-          return;
-        }
-
-        setScreenText("Please say Arabic or English.");
-        setRecognizedText(text || "-");
-        speakText("Please say Arabic or English.");
+      if (
+        lowerText.includes("arabic") ||
+        lowerText.includes("عربي") ||
+        lowerText.includes("العربية")
+      ) {
+        handleLanguageSelect("ar");
         return;
       }
 
-      if (!text || text.trim() === "") {
-        setStatus("No valid input received");
-        setScreenText("Please say something for the search.");
+      if (
+        lowerText.includes("english") ||
+        lowerText.includes("انجليزي") ||
+        lowerText.includes("english language")
+      ) {
+        handleLanguageSelect("en");
         return;
       }
 
-      setStatus("Processing");
-
-      const res = await fetch(`${baseUrl}/api/voice/command`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          language: selectedLanguage
-        })
-      });
-
-      if (!res.ok) {
-        throw new Error("Failed to send command");
-      }
-
-      const data = await res.json();
-
-      setRecognizedText(data.correctedText || data.recognizedText || text || "-");
-      setScreenText(data.screenText || "-");
-      setStatus("Ready");
-
-      if (!isMutedRef.current && data.screenText) {
-        speakText(data.screenText);
-      }
-    } catch (error) {
-      console.error(error);
-      setStatus("Error sending command");
-      setScreenText("Could not send command to API.");
+      setScreenText("Please say Arabic or English.");
+      setRecognizedText(text || "-");
+      speakText("Please say Arabic or English.");
+      return;
     }
-  };
+
+    if (!text || text.trim() === "") {
+      setStatus("No valid input received");
+      setScreenText("Please say something for the search.");
+      return;
+    }
+
+    setStatus("Processing");
+
+    const res = await fetch(`${baseUrl}/api/voice/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        language: selectedLanguage
+      })
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to send command");
+    }
+
+    const data = await res.json();
+
+    setRecognizedText(data.correctedText || data.recognizedText || text || "-");
+    setScreenText(data.screenText || "-");
+    setStatus("Ready");
+
+const textToSpeak = data.replyText || data.screenText || "";
+setLastSpokenText(textToSpeak);
+
+if (!isMutedRef.current && textToSpeak) {
+  speakText(textToSpeak);
+}
+
+  } catch (error) {
+    console.error(error);
+    setStatus("Error sending command");
+    setScreenText("Could not send command to API.");
+  }
+};
 
   const handleMute = () => {
     const nextMutedState = !isMutedRef.current;
@@ -223,12 +286,12 @@ export default function HomePageBlind() {
     }
   };
 
-  const handleReListen = () => {
-    if (!isMutedRef.current && screenText && screenText !== "-") {
-      speakText(screenText);
-      setStatus("Replaying audio");
-    }
-  };
+const handleReListen = () => {
+  if (!isMutedRef.current && lastSpokenText) {
+    speakText(lastSpokenText);
+    setStatus("Replaying audio");
+  }
+};
 
   const handleSkip = () => {
     window.speechSynthesis.cancel();

@@ -6,5 +6,5 @@ namespace MyApi.BLL.Service;
 public interface IOpenAiService
 {
     Task<string?> TranscribeAudioAsync(IFormFile file, string? language);
-    Task<CommandInterpretation?> InterpretCommandAsync(string text);
+    Task<CommandInterpretation?> InterpretCommandAsync(string text, string? language);
 }

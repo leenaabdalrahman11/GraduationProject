@@ -1,11 +1,9 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+using MyApi.DAL.DTO.Response;
 using MyApi.DAL.Models;
 
 namespace MyApi.BLL.Service;
+
 public interface IVoiceAssistantService
 {
-    Task<VoiceResponseDto> ExecuteCommandAsync(string text);
+    Task<VoiceResponseDto> ExecuteCommandAsync(string text, string? language);
 }

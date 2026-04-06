@@ -1,8 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-
 namespace MyApi.DAL.Models;
 
-public record VoiceCommandRequest(string Text);
+public class VoiceCommandRequest
+{
+    public string Text { get; set; } = string.Empty;
+    public string? Language { get; set; }
+}

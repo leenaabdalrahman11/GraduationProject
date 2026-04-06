@@ -46,15 +46,13 @@ public async Task<IActionResult> Transcribe(IFormFile file, [FromForm] string? l
 
     return Ok(new { text });
 }
-    [HttpPost("command")]
-    public async Task<IActionResult> ExecuteCommand([FromBody] VoiceCommandRequest request)
-    {
-        if (request is null || string.IsNullOrWhiteSpace(request.Text))
-        {
-            return BadRequest(new { error = "Text is required." });
-        }
+[HttpPost("command")]
+public async Task<IActionResult> ExecuteCommand([FromBody] VoiceCommandRequest request)
+{
+    if (request == null || string.IsNullOrWhiteSpace(request.Text))
+        return BadRequest(new { message = "Text is required" });
 
-        var result = await _voiceAssistantService.ExecuteCommandAsync(request.Text);
-        return Ok(result);
-    }
+    var result = await _voiceAssistantService.ExecuteCommandAsync(request.Text, request.Language);
+    return Ok(result);
+}
 }

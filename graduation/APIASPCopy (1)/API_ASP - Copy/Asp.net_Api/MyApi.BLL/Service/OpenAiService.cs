@@ -18,66 +18,73 @@ public class OpenAiService : IOpenAiService
         _config = config;
         _httpClientFactory = httpClientFactory;
     }
+    
 public async Task<string?> TranscribeAudioAsync(IFormFile file, string? language)
+{
+    if (file == null || file.Length == 0)
+        return null;
+
+    var apiKey = GetApiKey();
+    if (string.IsNullOrWhiteSpace(apiKey))
+        return null;
+
+    using var client = _httpClientFactory.CreateClient();
+    client.DefaultRequestHeaders.Authorization =
+        new AuthenticationHeaderValue("Bearer", apiKey);
+
+    using var content = new MultipartFormDataContent();
+    content.Add(new StringContent(string.IsNullOrWhiteSpace(language) ? "ar" : language), "language");
+
+    await using var stream = file.OpenReadStream();
+    using var fileContent = new StreamContent(stream);
+
+    fileContent.Headers.ContentType =
+        new MediaTypeHeaderValue(string.IsNullOrWhiteSpace(file.ContentType)
+            ? "audio/webm"
+            : file.ContentType);
+
+    content.Add(fileContent, "file", file.FileName);
+    content.Add(new StringContent("gpt-4o-transcribe"), "model");
+    content.Add(new StringContent("json"), "response_format");
+
+    var prompt = (language ?? "ar") == "en"
+        ? "This audio is mostly English, sometimes mixed with Arabic names. Keep product names and brand names as spoken."
+        : "This audio is mostly Arabic, sometimes mixed with English product names. Keep product names and brand names as spoken.";
+
+    content.Add(new StringContent(prompt), "prompt");
+
+    var response = await client.PostAsync(
+        "https://api.openai.com/v1/audio/transcriptions",
+        content);
+
+    if (!response.IsSuccessStatusCode)
     {
-        if (file == null || file.Length == 0)
-            return null;
-
-        var apiKey = GetApiKey();
-        if (string.IsNullOrWhiteSpace(apiKey))
-            return null;
-
-        using var client = _httpClientFactory.CreateClient();
-        client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", apiKey);
-
-        using var content = new MultipartFormDataContent();
-content.Add(new StringContent(string.IsNullOrWhiteSpace(language) ? "ar" : language), "language");
-        await using var stream = file.OpenReadStream();
-        using var fileContent = new StreamContent(stream);
-
-        fileContent.Headers.ContentType =
-            new MediaTypeHeaderValue(string.IsNullOrWhiteSpace(file.ContentType)
-                ? "audio/webm"
-                : file.ContentType);
-content.Add(fileContent, "file", file.FileName);
-content.Add(new StringContent("gpt-4o-transcribe"), "model");
-content.Add(new StringContent("json"), "response_format");
-content.Add(new StringContent("ar"), "language");
-content.Add(new StringContent("This audio is mostly Arabic, sometimes mixed with English product names. Keep product names and brand names as spoken."), "prompt");
-        var response = await client.PostAsync(
-            "https://api.openai.com/v1/audio/transcriptions",
-            content);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"Transcription error: {error}");
-            return null;
-        }
-
-        var responseBody = await response.Content.ReadAsStringAsync();
-
-        try
-        {
-            using var doc = JsonDocument.Parse(responseBody);
-            var root = doc.RootElement;
-
-            if (root.TryGetProperty("text", out var textProp) &&
-                textProp.ValueKind == JsonValueKind.String)
-            {
-                return textProp.GetString();
-            }
-
-            return responseBody;
-        }
-        catch
-        {
-            return responseBody;
-        }
+        var error = await response.Content.ReadAsStringAsync();
+        Console.WriteLine($"Transcription error: {error}");
+        return null;
     }
 
-public async Task<CommandInterpretation?> InterpretCommandAsync(string text)
+    var responseBody = await response.Content.ReadAsStringAsync();
+
+    try
+    {
+        using var doc = JsonDocument.Parse(responseBody);
+        var root = doc.RootElement;
+
+        if (root.TryGetProperty("text", out var textProp) &&
+            textProp.ValueKind == JsonValueKind.String)
+        {
+            return textProp.GetString();
+        }
+
+        return responseBody;
+    }
+    catch
+    {
+        return responseBody;
+    }
+}
+public async Task<CommandInterpretation?> InterpretCommandAsync(string text, string? language)
 {
     if (string.IsNullOrWhiteSpace(text))
         return null;
@@ -89,6 +96,8 @@ public async Task<CommandInterpretation?> InterpretCommandAsync(string text)
     using var client = _httpClientFactory.CreateClient();
     client.DefaultRequestHeaders.Authorization =
         new AuthenticationHeaderValue("Bearer", apiKey);
+
+    var selectedLanguage = string.IsNullOrWhiteSpace(language) ? "ar" : language;
 
     var payload = new
     {
@@ -111,7 +120,8 @@ Your job:
 1. Correct obvious transcription mistakes without changing meaning.
 2. Detect the intended action.
 3. Extract the search term if present.
-4. Return structured JSON only.
+4. Respect the selected language.
+5. Return structured JSON only.
 
 Allowed actions:
 - SearchProduct
@@ -121,9 +131,12 @@ Allowed actions:
 - Repeat
 - GoBack
 - Exit
+- GeneralConversation
 - Unknown
 
 Rules:
+- If selected language is Arabic, prefer Arabic conversational understanding.
+- If selected language is English, prefer English conversational understanding.
 - If user asks to search/find/look for a product => SearchProduct
 - If user asks about cart => ViewCart
 - If user asks to track latest order => TrackLatestOrder
@@ -131,6 +144,7 @@ Rules:
 - If user says repeat/relisten => Repeat
 - If user says back/go back => GoBack
 - If user says exit/quit/close/goodbye => Exit
+- If user says greetings, thanks, or simple conversational phrases not related to store commands => GeneralConversation
 - Otherwise => Unknown
 
 Set confidence between 0 and 1.
@@ -147,7 +161,7 @@ If no product term exists, query should be empty string.
                     new
                     {
                         type = "text",
-                        text = $"User text: {text}"
+                        text = $"Selected language: {selectedLanguage}. User text: {text}"
                     }
                 }
             }
@@ -176,6 +190,7 @@ If no product term exists, query should be empty string.
                                 "Repeat",
                                 "GoBack",
                                 "Exit",
+                                "GeneralConversation",
                                 "Unknown"
                             }
                         },
